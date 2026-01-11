@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Instruction → Choose an Object</title>
+  <style>
+    :root { --maxw: 980px; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 24px;
+      color: #111;
+      background: #fff;
+    }
+    .container { max-width: var(--maxw); margin: 0 auto; }
+    .card {
+      border: 1px solid #e6e6e6;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 1px 10px rgba(0,0,0,0.04);
+      background: #fff;
+    }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pill {
+      display:inline-block;
+      padding: 3px 10px;
+      border:1px solid #ddd;
+      border-radius: 999px;
+      font-size: 12px;
+      color:#444;
+      background: #fafafa;
+    }
+    .muted { color: #666; font-size: 14px; line-height: 1.45; }
+    .danger { color: #b00020; }
+    .spacer { height: 12px; }
+
+    h2 { margin: 0 0 6px 0; }
+    h3 { margin: 0 0 8px 0; font-size: 18px; }
+    .instruction {
+      font-size: 18px;
+      font-weight: 650;
+      margin: 0 0 10px 0;
+    }
+
+    .imgWrap { margin-top: 10px; }
+    img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #ddd;
+      border-radius: 14px;
+      background: #f7f7f7;
+    }
+
+    .options { margin-top: 14px; display: grid; gap: 10px; }
+    .opt {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid #e6e6e6;
+      border-radius: 14px;
+      cursor: pointer;
+      user-select: none;
+      background: #fff;
+    }
+    .opt:hover { background: #fafafa; }
+    .opt input { transform: scale(1.1); }
+
+    button {
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    button.primary { border-color: #111; background: #111; color: #fff; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .hidden { display: none; }
+    code { background:#f6f6f6; padding: 2px 6px; border-radius: 10px; }
+    a { color: inherit; }
+    .small { font-size: 12px; }
+  </style>
+</head>
+
+<body>
+<div class="container">
+  <h2>Instruction → Choose an Object</h2>
+  <p class="muted">
+    In this study, you will choose a tool to complete a task. For each question, you will see (1) a scene image, (2) a task instruction, and (3) a list of tool names shown in the scene. Please select one tool that you would be most likely to use to complete the task. There is no single correct answer—choose the option that best matches your intuition.
+  </p>
+
+  <div class="row">
+    <span class="pill" id="metaPill">Loading…</span>
+    <span class="pill" id="progressPill">–</span>
+    <span class="pill" id="trialIdPill">–</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- Consent -->
+  <div id="screenConsent" class="card">
+    <h3>Consent</h3>
+    <p class="muted">
+      By clicking <b>I agree</b>, you confirm you are at least 18 years old and consent to participate in this research study.
+      You may stop at any time by closing the tab. Your responses will be recorded anonymously.
+    </p>
+    <div class="spacer"></div>
+    <div class="row">
+      <button id="btnAgree" class="primary">I agree</button>
+      <button id="btnDecline">I do not agree</button>
+    </div>
+    <p class="muted danger hidden" id="consentErr"></p>
+  </div>
+
+  <!-- Main Task -->
+  <div id="screenTask" class="card hidden">
+    <div class="imgWrap" id="imgWrap"></div>
+    
+    <div class="instruction" id="instructionText">Instruction</div>
+    
+    <div class="options" id="options"></div>
+
+    <div class="spacer"></div>
+    <div class="row">
+      <button id="btnPrev">Previous</button>
+      <button id="btnNext" class="primary">Next</button>
+      <span class="muted" id="hintText"></span>
+    </div>
+
+    <div class="spacer"></div>
+    <p class="muted small">
+      Loaded batch file: <code id="taskFileCode">–</code>
+    </p>
+  </div>
+
+  <!-- Done -->
+  <div id="screenDone" class="card hidden">
+    <h3>Submitted</h3>
+    <p class="muted">Thank you! Redirecting you back to Prolific…</p>
+    <p class="muted">
+      If you are not redirected automatically, click:
+      <a id="prolificLink" href="#">Return to Prolific</a>
+    </p>
+  </div>
+
+  <!-- Error -->
+  <div id="screenError" class="card hidden">
+    <h3>Something went wrong</h3>
+    <p class="muted danger" id="errMsg"></p>
+  </div>
+</div>
+
+<!-- You should have config.js with:
+  window.APP_CONFIG = { GAS_URL: ".../exec", PROLIFIC_COMPLETION_URL: "https://app.prolific.com/submissions/complete?cc=XXXXXX" }
+-->
+<script src="./config.js"></script>
+
+<script>
+  // ---------- Helpers ----------
+  function qs(name) {
+    return new URLSearchParams(window.location.search).get(name) || "";
+  }
+  function show(id) { document.getElementById(id).classList.remove("hidden"); }
+  function hide(id) { document.getElementById(id).classList.add("hidden"); }
+  function setError(msg) {
+    hide("screenConsent"); hide("screenTask"); hide("screenDone");
+    document.getElementById("errMsg").textContent = msg;
+    show("screenError");
+  }
+
+  // ---------- URL params (Prolific + Taskflow batch id) ----------
+  const prolific_pid = qs("PROLIFIC_PID");
+  const study_id     = qs("STUDY_ID");
+  const session_id   = qs("SESSION_ID");
+
+  // Expect tasks/001.json ... tasks/020.json
+  const batch = qs("task") || "001";
+  const taskFile = `tasks/${batch}.json`;
+  document.getElementById("taskFileCode").textContent = taskFile;
+
+  // Completion URL:
+  // 1) If you pass ?completion=... it wins
+  // 2) else if you pass ?cc=XXXXXX, build Prolific completion URL
+  // 3) else use config.js PROLIFIC_COMPLETION_URL
+  const completionFromQuery = qs("completion");
+  const cc = qs("cc");
+  const completionUrl =
+    completionFromQuery ||
+    (cc ? `https://app.prolific.com/submissions/complete?cc=${encodeURIComponent(cc)}` : "") ||
+    (window.APP_CONFIG && window.APP_CONFIG.PROLIFIC_COMPLETION_URL) ||
+    "";
+
+  // Meta pill
+  document.getElementById("metaPill").textContent =
+    `batch=${batch} | PID=${prolific_pid || "NA"}`;
+
+  // ---------- State ----------
+  let items = [];
+  let idx = 0;
+  let trialStart = performance.now();
+
+  // Per-trial response: { trial_index, task_id, choice, choice_index, rt_ms }
+  const responses = [];
+
+  function preloadImage(url) {
+    if (!url) return;
+    const im = new Image();
+    im.src = url;
+  }
+
+  function normalizeOptions(arr) {
+    if (!Array.isArray(arr)) return [];
+    // Ensure strings
+    return arr.map(x => String(x));
+  }
+
+  function currentTrialId(it) {
+    // Prefer explicit task_id if present
+    if (it && it.task_id) return String(it.task_id);
+    // Otherwise fall back to something stable-ish
+    return `trial_${idx + 1}`;
+  }
+
+  function render() {
+    const it = items[idx];
+
+    document.getElementById("progressPill").textContent = `Progress: ${idx + 1}/${items.length}`;
+    document.getElementById("trialIdPill").textContent = `Trial: ${currentTrialId(it)}`;
+
+    // Instruction
+    const instruction = (it && it.instruction) ? String(it.instruction) : "Instruction";
+    document.getElementById("instructionText").textContent = instruction;
+
+    // Image
+    const imgWrap = document.getElementById("imgWrap");
+    imgWrap.innerHTML = "";
+
+    if (it && it.image_url) {
+      const img = new Image();
+      img.alt = currentTrialId(it);
+      img.src = String(it.image_url);
+      img.loading = "eager";
+      imgWrap.appendChild(img);
+    } else {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Image unavailable.";
+      imgWrap.appendChild(p);
+    }
+
+    // Options
+    const options = normalizeOptions(it ? (it.options || it.object_list) : []);
+    if (options.length < 2) {
+      setError(`This trial has invalid options: ${currentTrialId(it)}.`);
+      return;
+    }
+
+    const optionsDiv = document.getElementById("options");
+    optionsDiv.innerHTML = "";
+
+    const savedIndex = responses[idx]?.choice_index || 0;
+
+    options.forEach((label, i) => {
+      const choiceIndex = i + 1;
+
+      const row = document.createElement("label");
+      row.className = "opt";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "opt";
+      radio.value = String(choiceIndex);
+      radio.checked = (savedIndex === choiceIndex);
+
+      radio.addEventListener("change", () => {
+        const rt = Math.round(performance.now() - trialStart);
+        responses[idx] = {
+          trial_index: idx,
+          task_id: currentTrialId(it),
+          choice: label,
+          choice_index: choiceIndex,
+          rt_ms: rt
+        };
+        document.getElementById("btnNext").disabled = false;
+        document.getElementById("hintText").textContent = "";
+      });
+
+      const span = document.createElement("span");
+      span.textContent = label;
+
+      row.appendChild(radio);
+      row.appendChild(span);
+      optionsDiv.appendChild(row);
+    });
+
+    // Buttons
+    const prevBtn = document.getElementById("btnPrev");
+    const nextBtn = document.getElementById("btnNext");
+
+    prevBtn.disabled = (idx === 0);
+    nextBtn.textContent = (idx === items.length - 1) ? "Submit" : "Next";
+    nextBtn.disabled = !(responses[idx] && responses[idx].choice_index);
+
+    // Preload next image for speed
+    if (idx + 1 < items.length) {
+      const next = items[idx + 1];
+      preloadImage(next && next.image_url);
+    }
+
+    // Reset RT timer
+    trialStart = performance.now();
+  }
+
+  async function submitAll() {
+    // Validate answered
+    for (let i = 0; i < items.length; i++) {
+      if (!responses[i] || !responses[i].choice_index) {
+        setError(`You have unanswered items (item ${i + 1}). Please go back and complete all items.`);
+        return;
+      }
+    }
+    if (!window.APP_CONFIG || !window.APP_CONFIG.GAS_URL) {
+      setError("Missing GAS_URL. Please configure config.js.");
+      return;
+    }
+    if (!completionUrl) {
+      setError("Missing Prolific completion URL. Set it in config.js or pass ?cc=XXXXXX.");
+      return;
+    }
+
+    hide("screenTask");
+    show("screenDone");
+    document.getElementById("prolificLink").href = completionUrl;
+
+    // Payload (store only responses + identifiers; you can join with tasks file later)
+    const payload = {
+      prolific_pid,
+      study_id,
+      session_id,
+      batch,
+      responses,
+      user_agent: navigator.userAgent,
+      page_url: window.location.href
+    };
+
+    try {
+      // no-cors to avoid CORS/preflight with Apps Script Web App
+      await fetch(window.APP_CONFIG.GAS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+
+      // short delay then redirect
+      await new Promise(r => setTimeout(r, 800));
+      window.location.href = completionUrl;
+    } catch (e) {
+      console.warn(e);
+      // Still let them return manually
+      document.getElementById("hintText").textContent =
+        "Submission may have failed. Please contact the researcher if needed.";
+    }
+  }
+
+  // ---------- UI handlers ----------
+  document.getElementById("btnAgree").addEventListener("click", () => {
+    hide("screenConsent");
+    show("screenTask");
+    render();
+  });
+
+  document.getElementById("btnDecline").addEventListener("click", () => {
+    const el = document.getElementById("consentErr");
+    el.textContent = "You chose not to consent. Please close this page and return the study on Prolific.";
+    el.classList.remove("hidden");
+  });
+
+  document.getElementById("btnPrev").addEventListener("click", () => {
+    if (idx > 0) { idx--; render(); }
+  });
+
+  document.getElementById("btnNext").addEventListener("click", async () => {
+    const nextBtn = document.getElementById("btnNext");
+
+    // If unanswered, block (extra safeguard)
+    if (!(responses[idx] && responses[idx].choice_index)) {
+      document.getElementById("hintText").textContent = "Please select one option to continue.";
+      nextBtn.disabled = true;
+      return;
+    }
+
+    if (idx === items.length - 1) {
+      await submitAll();
+      return;
+    }
+    idx++;
+    render();
+  });
+
+  // ---------- Init ----------
+  (async function init() {
+    try {
+      const res = await fetch(taskFile, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to load ${taskFile} (HTTP ${res.status})`);
+
+      items = await res.json();
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new Error(`Invalid task file: ${taskFile} must be a non-empty JSON array.`);
+      }
+
+      // If your tasks were generated from your dataset JSON, they likely already contain:
+      // { task_id, image_url, instruction, options }
+      // This page also supports { object_list } as a fallback.
+
+    } catch (e) {
+      setError(String(e));
+    }
+  })();
+</script>
+</body>
+</html>
